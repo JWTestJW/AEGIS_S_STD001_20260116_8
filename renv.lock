@@ -5,7 +5,7 @@
       {
         "Name": "CRAN",
         "URL": "https://aegisrspm.akaws-r-alb.onecloudlabo.com/cran-snapshot-20251216/latest"
-      }
+      }, 
       {
         "Name": "INHOUSE",
         "URL": "https://aegisrspm.akaws-r-alb.onecloudlabo.com/in-house-20251216/latest"
