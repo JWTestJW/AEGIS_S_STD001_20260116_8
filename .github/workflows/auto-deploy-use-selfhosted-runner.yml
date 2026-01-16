@@ -5,11 +5,12 @@
 #  新しいTagが作成された際に、リポジトリの資材をデプロイします。
 #
 #  実行条件：
-#  1. v* で始まるTagがプッシュされた場合
-#     - 例外：v0.0.0 は除外（デプロイをスキップ）
-#     - 例外：vX.Y.Z の形式（セマンティックバージョニング）に準拠していない場合はエラー
+#  1. 自動実行（Auto Tag Processing 完了時）
+#     - "Auto Tag Processing" ワークフローが成功した場合にトリガーされます。
+#     - リポジトリの最新のタグ（git describe --tags）を自動的に取得し、そのバージョンの資材をデプロイします。
 #  2. 手動実行（workflow_dispatch）
-#     - タグ検証処理はスキップされ、選択されたブランチ/タグがそのままデプロイされます
+#     - ユーザーが選択したブランチまたはタグの資材をデプロイします。
+#     - タグの自動取得ロジックはスキップされます。
 #
 #  主な機能：
 #  - 東京時間の日時（ミリ秒まで）を含むフォルダを作成（例: Deploy_20251223123000123）
@@ -26,13 +27,17 @@ permissions:
 
 on:
   workflow_dispatch: {}
-  push:
-    tags:
-      - "v*" # vで始まるすべてのタグを含める
-      - "!v0.0.0" # v0.0.0 を除外（ワークフロー自体をトリガーさせない）
+  workflow_run:
+    workflows: ["Auto Tag Processing"]
+    types:
+      - completed
+    branches:
+      - main
 
 jobs:
   deploy:
+    # workflow_run の場合は成功時のみ実行。手動実行も許可。
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     # Self-Hosted ランナーを指定（ラベルは環境に合わせて調整してください）
     runs-on: [self-hosted, linux]
 
@@ -40,19 +45,31 @@ jobs:
       MOUNT_TARGET_DIR: ${{ secrets.MOUNT_TARGET_DIR }}
 
     steps:
-      - name: Log Tag Information
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          # GITHUB_REF はワークフローをトリガーしたイベントの参照（例: refs/tags/v1.0.0）
-          # ここではトリガーとなったタグ名を取得しています
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          echo "Processing Tag: $TAG_NAME"
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Tagトリガーの場合、デフォルトでそのTagがチェックアウトされるため ref 指定は不要
+          fetch-depth: 0 # 最新のTagを取得するために全履歴が必要
           path: checkoutDir
+
+      - name: Log and Checkout Latest Tag
+        working-directory: checkoutDir
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "Manual trigger detected. Using the selected ref: $GITHUB_REF"
+            # 手動トリガーの場合は actions/checkout が既に選択されたブランチ/タグをチェックアウトしている
+          else
+            # workflow_run トリガーの場合、mainブランチがチェックアウトされているため、
+            # 最新のタグを探してチェックアウトし直す
+            echo "Workflow triggered by auto-tag-processing completion."
+            
+            # 最新のタグを取得 (current commitから到達可能なもの)
+            LATEST_TAG=$(git describe --tags --abbrev=0)
+            echo "Detected latest tag: $LATEST_TAG"
+            
+            echo "Checking out tag: $LATEST_TAG"
+            git checkout $LATEST_TAG
+            echo "Processing Tag: $LATEST_TAG"
+          fi
 
       - name: Prepare and Copy to Mount Point
         env:
